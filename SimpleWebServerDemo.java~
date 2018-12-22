@@ -1,0 +1,554 @@
+/* [SimpleWebServerDemo.java]
+ * Description: This is an example of a web server.
+ * The program  waits for a client and accepts a message. 
+ * It then responds to the message and quits.
+ * This server demonstrates how to employ multithreading to accepts multiple clients
+ * @author Kevin
+ */
+
+//imports for network communication
+import java.io.*;
+import java.net.*;
+import java.awt.*;
+import javax.swing.*;
+import java.awt.event.*;
+import java.util.Scanner;
+import java.sql.*;
+
+
+class SimpleWebServerDemo {
+  
+  ServerSocket serverSock;// server socket for connection
+  static Boolean running = true;  // controls if the server is accepting clients
+  static Boolean accepting = true;
+  /** Main
+    * @param args parameters from command line
+    */
+  public static void main(String[] args) {
+    createDatabase();
+    new SimpleWebServerDemo().go(); //start the server
+  }
+  
+  /** Go
+    * Starts the server
+    */
+  public void go() {
+    System.out.println("Waiting for a client connection..");
+    
+    Socket client = null;//hold the client connection
+    
+    try {
+      serverSock = new ServerSocket(80);  //assigns an port to the server
+      
+      while(accepting) {  //this loops to accept multiple clients
+        client = serverSock.accept();  //wait for connection
+        System.out.println("Client connected");
+        //Note: you might want to keep references to all clients if you plan to broadcast messages
+        //Also: Queues are good tools to buffer incoming/outgoing messages
+        Thread t = new Thread(new ConnectionHandler(client)); //create a thread for the new client and pass in the socket
+        t.start(); //start the new thread
+//        accepting=false; //only accepts one at a time, SO FAR**********************************************************************************************
+      }
+    }catch(Exception e) { 
+      // System.out.println("Error accepting connection");
+      //close all and quit
+       try {
+       client.close();
+       }catch (Exception e1) { 
+       System.out.println("Failed to close socket");
+       }
+       System.exit(-1);
+    }
+  }
+  
+  //***** Inner class - thread for client connection
+  class ConnectionHandler implements Runnable {
+    private DataOutputStream output; //assign printwriter to network stream
+    private BufferedReader input; //Stream for network input
+    private Socket client;  //keeps track of the client socket
+    private boolean running;
+    
+    //GUI Stuff
+    private JButton sendButton, htmlButton;
+    private JTextField typeField;
+    private JTextArea messageArea; 
+    private JPanel southPanel;
+    
+    /* ConnectionHandler
+     * Constructor
+     * @param the socket belonging to this client connection
+     */    
+    ConnectionHandler(Socket s) { 
+      this.client = s;  //constructor assigns client to this    
+      try {  //assign all connections to client
+        this.output =  new DataOutputStream(client.getOutputStream());
+        InputStreamReader stream = new InputStreamReader(client.getInputStream());
+        this.input = new BufferedReader(stream);
+      }catch(IOException e) {
+        e.printStackTrace();        
+      }            
+      running=true;
+
+    } //end of constructor
+    
+    
+    public void initGUI() {
+      JFrame window = new JFrame("Web Server");
+      southPanel = new JPanel();
+      southPanel.setLayout(new GridLayout(2,0));
+      
+      sendButton = new JButton("SEND HTML W/IMAGE");
+      htmlButton = new JButton("SEND HTML");
+      
+      sendButton.addActionListener(new SendButtonListener());
+      htmlButton.addActionListener(new htmlButtonListener());
+      
+      JLabel errorLabel = new JLabel("");
+      
+      typeField = new JTextField(10);
+      
+      messageArea = new JTextArea();
+      
+      southPanel.add(typeField);
+      southPanel.add(sendButton);
+      southPanel.add(errorLabel);
+      southPanel.add(htmlButton);
+      
+      window.add(BorderLayout.CENTER,messageArea);
+      window.add(BorderLayout.SOUTH,southPanel);
+      
+      window.setSize(400,400);
+      window.setVisible(true);
+      
+      // call a method that connects to the server 
+      // after connecting loop and keep appending[.append()] to the JTextArea
+    }
+    
+    
+    /* run
+     * executed on start of thread
+     */
+    public void run() {
+      
+      int pageNum = 0; //Starting page number is 0
+      
+      //Get a message from the client
+      String userName = "";
+      String message= "";
+      
+      boolean ready = false;
+      String postMessage = "";
+      //Get a message from the client
+      while(running) {  // loop until a message is received  
+        
+        try {
+          if (input.ready()) { //check for an incoming messge
+
+            //Declare variables for use
+            String URL = "";
+            int gotURL = 0;
+            int contentLength = 0;
+            
+            while (input.ready()) {
+              message = input.readLine();  //get a message from the client
+
+              //Set url
+              if (gotURL < 1) {
+                URL = message;
+                gotURL++;
+              }
+              
+            }
+            
+            URL = URL.substring(URL.indexOf("/") + 1, URL.indexOf(" HTTP")); //Check the url without the HTTP
+            
+            if (URL.equals("")) { //If it is on the homepage
+              sendHTML("homepage.html");
+            }
+            if (URL.equals("favicon.ico")) { //Set the icon in the url
+              sendHTML(URL);
+              ready = false; //do not proceed with the loading of the page
+            }
+            if (URL.equals("image.jpg")) { //Set the bottom image in the url
+              sendHTML(URL);
+              ready = false; //do not proceed with the loading of the page
+            }
+
+            if (ready == true) { //check if the url has loaded
+              if (URL.substring(0,8).equals("sign-in?")) {
+                pageNum = 1;
+                userName = URL.substring(URL.indexOf("Username=") + 9, URL.indexOf("&pass"));
+              } else if(URL.substring(0,8).equals("profile?")) {
+                pageNum = 3;
+              } else if(URL.substring(0,8).equals("log-out?")) {
+                sendHTML("homepage.html");
+                pageNum = 0;
+              } else if (URL.substring(0,9).equals("register?")) {
+                pageNum = 2;
+              } else if (URL.substring(0,12).equals("editProf?")) {
+                pageNum = 4;
+              }
+            }
+
+            ready = true; // the second time around, we can do this thing
+            
+            if (pageNum == 1) { //if at the homepage, so therefore the log-in/register button is being pressed
+                String password = URL.substring(URL.indexOf("password=") + 9, URL.indexOf("&opti"));
+                int option = Integer.parseInt(URL.substring(URL.indexOf("option=") + 7));
+      
+                
+                if (option == 0) { //attempt log in and display profile (what if wrong user/pass)
+                  Boolean passCorrect = checkPass(userName, password);
+                  if (passCorrect == true) {
+                    sendProfile("profile.html", userName); 
+                  } else if (passCorrect == false) {
+                    sendHTML("nouserpass.html");
+                  }
+                } else if (option == 1) { //register the person
+                  Boolean alreadyReg = checkUsername(userName);
+                  if (alreadyReg == false) {
+                    sendHTML("alreadyReg.html");
+                  } else if (alreadyReg == true) {
+                    register(userName, password);
+                    sendHTML("createProf.html");
+                  }
+                }
+              
+            }
+            if (pageNum == 2) { //if at the create profile page
+              String name = URL.substring(URL.indexOf("name=") + 5, URL.indexOf("&color"));
+              String backgroundColor = URL.substring(URL.indexOf("color=") + 6, URL.indexOf("&description"));
+              String description = URL.substring(URL.indexOf("description=") + 12);
+              insert(userName, name, backgroundColor, description);
+              sendProfile("profile.html", userName);
+            }
+            if (pageNum == 3) {
+              sendProfile("editProf.html", userName);
+            }
+            
+            if (pageNum == 4) {
+              String name = URL.substring(URL.indexOf("name=") + 5, URL.indexOf("&color"));
+              String backgroundColor = URL.substring(URL.indexOf("color=") + 6, URL.indexOf("&description"));
+              String description = URL.substring(URL.indexOf("description=") + 12);
+
+              update(userName, name, backgroundColor, description);
+              sendProfile("profile.html", userName);
+            }
+
+          }
+          
+          
+        }catch (IOException e) {
+          System.out.println("Failed to receive a message from the client");
+          e.printStackTrace();
+        }
+      }
+      
+      //close the socket
+       try {
+       input.close();
+       output.close();
+       client.close();
+       }catch (Exception e) {
+       System.out.println("Failed to close socket");
+       }
+       
+    } // end of run()
+    
+    
+    //****** Inner Classes for Action Listeners ****
+    
+    //To complete this you will need to add action listeners to both buttons
+    // clear - clears the textfield
+    // send - send message to server (also flush), then clear the JTextField
+    class SendButtonListener implements ActionListener { 
+      public void actionPerformed(ActionEvent event)  {
+      }
+    }
+    
+    class htmlButtonListener implements ActionListener {
+      public void actionPerformed(ActionEvent event)  {
+        
+        sendHTML("homepage.html");
+        
+      }
+      
+    }
+    public boolean checkPass (String userName, String password) {
+      File passwords = new File("passwords.txt");
+
+      try {
+        
+        Scanner input = new Scanner(passwords);
+        while (input.hasNextLine()) {
+          String user = input.nextLine();
+          if (user.equals(userName)) {
+            String pass = input.nextLine();
+            if (pass.equals(password)) {
+              return true;
+            }
+          }
+        }
+        input.close();
+      }
+      catch (FileNotFoundException e) {
+        e.printStackTrace();
+      }
+      
+      return false;
+      
+    }
+    
+    public boolean checkUsername (String userName) {
+      userName = userName.toLowerCase();
+      File storePass = new File("passwords.txt");
+      try {
+        
+        Scanner sc = new Scanner(storePass);
+        while (sc.hasNextLine()) {
+          String user = sc.nextLine().toLowerCase();
+          if (user.equals(userName)) {
+            return false;
+          }
+        }
+        sc.close();
+      }
+      catch (FileNotFoundException e) {
+        e.printStackTrace();
+      }
+      
+      return true;
+      
+    }
+    
+    
+    /*method for registering new people to the server or whatever */
+    public void register (String user, String pass) {
+      File storePass = new File("passwords.txt");
+      
+      try {
+        
+        PrintWriter print = new PrintWriter(new FileOutputStream(storePass,true));
+        print.println(user);
+        print.println(pass);
+        print.println("");
+        print.close();
+        System.out.println("successful registration");
+      }
+      
+      catch (FileNotFoundException e) {
+        e.printStackTrace();
+      }
+    }
+    //kinda useless method, but whatever
+    public String removeSpaces(String input) {
+      while (input.indexOf("+") != -1) {
+        input = input.substring(0, input.indexOf("+")) + " " + input.substring(input.indexOf("+") +1);
+      }
+      return input;
+    }
+    
+    
+    public void sendProfile (String HTML, String userName) {
+      File original = new File(HTML);
+      File webFile = new File("temp.html");
+      
+      //copy the original file to temp.html, but replace anything between % signs
+      try {
+        Scanner sc = new Scanner(original);
+        PrintWriter print = new PrintWriter(new FileOutputStream(webFile));
+        while (sc.hasNextLine()) {
+          //check if % signs in a line and replace text
+          String line = sc.nextLine();
+          String editedLine = line;
+          if (line.indexOf('%') != -1) { //if the %character exists within a line
+            int first = line.indexOf('%');
+            int second = line.substring(line.indexOf('%') + 1).indexOf('%') + first +1;
+            String toReplace = line.substring(first + 1, second);
+            if (toReplace.equals("NAME")) {
+              //get name from SQL
+              editedLine = line.substring(0, first) + select(userName, "name") + line.substring(second + 1);
+            } else if (toReplace.equals("COLOR")) {
+              editedLine = line.substring(0, first) + select(userName, "backgroundcolor") + line.substring(second + 1);
+            } else if (toReplace.equals("DESCRIPTION")) {
+              editedLine = line.substring(0, first) + select(userName, "description") + line.substring(second + 1);
+            }
+          }
+          //print edited line to the temp html file
+          print.println(removeSpaces(editedLine));
+        }
+        print.close();
+        sendHTML("temp.html");
+      } catch (FileNotFoundException e) {
+        e.printStackTrace();
+      }
+    }
+    
+    /*method for sending an HTML file (mostly for convenience) */
+    public void sendHTML (String HTML) {
+      
+      //honestly, its probably easier to take the original file, write it to another file, and then change the %COLOR% crap there
+      File webFile = new File(HTML);
+      BufferedInputStream in = null;
+      
+      try {
+        in = new BufferedInputStream(new FileInputStream(webFile));
+        int data;
+        
+        System.out.println("File Size: " +webFile.length());
+        byte[] d = new byte[(int)webFile.length()];
+        
+        output.writeBytes("HTTP/1.1 200 OK" + "\n");
+        output.flush();
+        
+        output.writeBytes("Content-Type: text/html"+"\n");
+        output.flush();
+        output.writeBytes("Content-Length: " + webFile.length() + "\n\n");
+        output.flush();
+        
+        String t="";
+        
+        
+        in.read(d,0,(int)webFile.length());
+        
+        
+        System.out.print(d[0]);
+        System.out.println();
+        System.out.println("read: " +webFile.length()+" bytes");
+        output.write(d,0,d.length);
+        System.out.println("sent: " +webFile.length()+" bytes");
+        
+        
+        output.flush();
+        
+      } catch (IOException e) { 
+        e.printStackTrace();}               
+ 
+      return;
+    }
+    
+    
+    
+    
+    
+  } //end of inner class   
+  
+  public static void update(String userName, String name, String backgroundcolor, String description) {
+       Connection c = null;
+   Statement stmt = null;
+   
+   try {
+      Class.forName("org.sqlite.JDBC");
+      c = DriverManager.getConnection("jdbc:sqlite:test.db");
+      c.setAutoCommit(false);
+      System.out.println("Opened database successfully");
+
+      stmt = c.createStatement();
+      String sql1 = "UPDATE CUSTOM set NAME = '"+name+"' where USERNAME= '"+userName+"';";
+      String sql2= "UPDATE CUSTOM set BACKGROUNDCOLOR = '"+backgroundcolor+"' where USERNAME= '"+userName+"';";
+      String sql3 = "UPDATE CUSTOM set DESCRIPTION = '"+description+"' where USERNAME= '"+userName+"';";
+      stmt.executeUpdate(sql1);
+      stmt.executeUpdate(sql2);
+      stmt.executeUpdate(sql3);
+      c.commit();
+      
+      stmt.close();
+      c.close();
+   } catch ( Exception e ) {
+     System.err.println( e.getClass().getName() + ": " + e.getMessage() );
+     System.exit(0);
+   }
+  }
+  
+  public static void createDatabase() {
+    Connection c = null;
+    Statement stmt = null;
+    
+    try {
+      Class.forName("org.sqlite.JDBC");
+      c = DriverManager.getConnection("jdbc:sqlite:test.db");
+      System.out.println("Opened database successfully");
+      
+      stmt = c.createStatement();
+      String sql = "CREATE TABLE IF NOT EXISTS CUSTOM" +
+        "(USERNAME TEXT PRIMARY KEY NOT NULL, " +
+        " NAME TEXT NOT NULL, " + 
+        " BACKGROUNDCOLOR TEXT NOT NULL, " + 
+        " DESCRIPTION TEXT)"; 
+      stmt.executeUpdate(sql);
+      stmt.close();
+      c.close();
+    } catch ( Exception e ) {
+      System.err.println( e.getClass().getName() + ": " + e.getMessage() );
+      System.exit(0);
+    }
+    System.out.println("Table created successfully");
+  }
+  public static void insert(String userName, String name, String backgroundColor, String description ) {
+    Connection c = null;
+      Statement stmt = null;
+      
+      try {
+         Class.forName("org.sqlite.JDBC");
+         c = DriverManager.getConnection("jdbc:sqlite:test.db");
+         c.setAutoCommit(false);
+         System.out.println("Opened database successfully");
+
+         stmt = c.createStatement();
+         String sql = "INSERT INTO CUSTOM (USERNAME,NAME,BACKGROUNDCOLOR,DESCRIPTION) " +
+                        "VALUES ('"+userName+"', '"+name+"', '"+backgroundColor+"', '"+description+"');"; //does this work?************************************************
+         stmt.executeUpdate(sql);
+
+         stmt.close();
+         c.commit();
+         c.close();
+      } catch ( Exception e ) {
+        System.err.println( e.getClass().getName() + ": " + e.getMessage() );
+//        System.exit(0);
+      }
+      System.out.println("Records created successfully");
+  }
+  public static String select(String userName, String need) {
+    String query = "";
+    Connection c = null;
+    Statement stmt = null;
+    try {
+      Class.forName("org.sqlite.JDBC");
+      c = DriverManager.getConnection("jdbc:sqlite:test.db");
+      c.setAutoCommit(false);
+      System.out.println("Opened database successfully");
+      
+      stmt = c.createStatement();
+      ResultSet rs = stmt.executeQuery( "SELECT * FROM CUSTOM WHERE USERNAME = '"+userName+"';"); 
+      
+      while ( rs.next() ) {
+        String  name = rs.getString("name");
+        String  backgroundcolor = rs.getString("backgroundcolor");
+        String description = rs.getString("description");
+        
+        if (need.equals("name" )) {
+          query = name;
+        } else if (need.equals("backgroundcolor")) {
+          query = backgroundcolor;
+        } else if (need.equals("description")) {
+          query = description;
+        }
+                   
+        System.out.println( "USERNAME = " + userName );
+        System.out.println( "NAME = " + name );
+        System.out.println( "BACKGROUNDCOLOR = " + backgroundcolor );
+        System.out.println( "DESCRIPTION = " + description );
+        System.out.println();
+      }
+      rs.close();
+      stmt.close();
+      c.close();
+    } catch ( Exception e ) {
+      System.err.println( e.getClass().getName() + ": " + e.getMessage() );
+      System.exit(0);
+    }
+    System.out.println("Operation done successfully");
+    return query;
+  }
+  
+}
